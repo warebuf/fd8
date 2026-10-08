@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>fd8 · Robattle</title>
+<style>
+  body{ font-family:system-ui, sans-serif; margin:0; padding:12px; background:#f4f4f4; color:#111; font-size:14px; }
+  h2{ margin:4px 0 8px; font-size:16px; }
+  button{ font:inherit; cursor:pointer; }
+  table{ border-collapse:collapse; }
+  td, th{ border:1px solid #ccc; padding:2px 6px; text-align:left; }
+  th{ background:#e6e6e6; }
+  .num{ text-align:right; font-family:ui-monospace, monospace; }
+  .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+  .box{ background:#fff; border:1px solid #ccc; padding:8px; }
+  .p1{ color:#0a6e8a; } .p2{ color:#b5500b; }
+  select{ font:inherit; max-width:170px; }
+  .hidden{ display:none; }
+
+  /* gauge field: P1 walks right from its base, P2 walks left; the center line is in the middle */
+  .field{ position:relative; width:760px; background:#fff; border:1px solid #ccc; }
+  .lane{ position:relative; height:44px; border-bottom:1px dashed #ddd; }
+  .center{ position:absolute; left:50%; top:0; bottom:0; border-left:2px solid #c00; }
+  .marker{ position:absolute; top:6px; width:110px; margin-left:-55px; text-align:center; font-size:12px; padding:2px; border:2px solid; background:#fff; }
+  .marker.p1{ border-color:#0a6e8a; } .marker.p2{ border-color:#b5500b; }
+  .marker.out{ opacity:.35; text-decoration:line-through; }
+  .marker.idle{ background:#ffe; } .marker.guard{ background:#def; }
+  .bar{ height:5px; background:#ddd; width:80px; display:inline-block; vertical-align:middle; }
+  .bar > div{ height:100%; background:#3a3; }
+  .bar.low > div{ background:#d33; }
+  .dead{ color:#999; text-decoration:line-through; }
+  .log{ height:260px; overflow-y:auto; width:520px; font-family:ui-monospace, monospace; font-size:12px; white-space:pre-wrap; }
+  .log .act{ font-weight:bold; } .log .miss{ color:#888; } .log .crit{ color:#c00; font-weight:bold; } .log .out{ color:#c00; }
+  .log .heal{ color:#080; } .log .order{ color:#666; }
+  .cmd button{ display:block; margin:3px 0; text-align:left; width:100%; }
+  .cmd{ width:330px; min-height:120px; }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h2>fd8 · Robattle setup <small>(you play both sides; slot 1 is the leader)</small></h2>
+  <div class="row">
+    <div class="box" id="team0"></div>
+    <div class="box" id="team1"></div>
+  </div>
+  <p>Terrain: <select id="terrain"></select> <button id="startBtn"><b>Start robattle</b></button></p>
+  <h2>Parts <small>(numbers are placeholders — edit data.js)</small></h2>
+  <div class="box" id="partsTable"></div>
+</div>
+
+<div id="battle" class="hidden">
+  <h2>Robattle <small id="terrainLabel"></small> <button id="speedBtn">Speed: 1×</button> <button id="quitBtn">Back to setup</button></h2>
+  <div class="field" id="field"></div>
+  <div class="row" style="margin-top:10px">
+    <div class="box cmd" id="cmd"></div>
+    <div class="box" id="teamStatus0"></div>
+    <div class="box" id="teamStatus1"></div>
+  </div>
+  <div class="box log" id="log" style="margin-top:10px"></div>
+</div>
+
+<script src="data.js"></script>
+<script src="game.js"></script>
+<script>
+(function(){
+  var teams = DEFAULT_TEAMS.map(function(t){ return t.map(function(k){ return JSON.parse(JSON.stringify(PRESETS[k])); }); });
+  var battle = null, timer = null, speed = 1, pendingTarget = null;
+
+  function $(id){ return document.getElementById(id); }
+  function opt(value, text, sel){ return '<option value="' + value + '"' + (sel ? ' selected' : '') + '>' + text + '</option>'; }
+  function partSummary(def){
+    if (def.slot === 'legs') return def.legType + ' · prop ' + def.propulsion + ' · eva ' + def.evasion + ' · def ' + def.defense;
+    return def.action + (def.type ? '/' + def.type : '') + ' · pow ' + def.power + ' · suc ' + def.success + ' · chg ' + def.charge + ' · cd ' + def.cooldown + (def.uses != null ? ' · ×' + def.uses : '');
+  }
+
+  // ---------- setup ----------
+  function renderTeam(side){
+    var html = '<b class="p' + (side + 1) + '">Player ' + (side + 1) + '</b><table><tr><th>#</th><th>Preset</th><th>Name</th>' +
+      SLOTS.map(function(s){ return '<th>' + SLOT_LABEL[s] + '</th>'; }).join('') + '<th>Medal</th></tr>';
+    teams[side].forEach(function(bot, i){
+      html += '<tr><td>' + (i + 1) + (i === 0 ? '★' : '') + '</td><td><select data-preset="' + side + '-' + i + '">' + opt('', '—') +
+        Object.keys(PRESETS).map(function(k){ return opt(k, PRESETS[k].name); }).join('') + '</select></td>' +
+        '<td><input size="8" data-name="' + side + '-' + i + '" value="' + bot.name + '"></td>';
+      SLOTS.forEach(function(slot){
+        html += '<td><select data-part="' + side + '-' + i + '-' + slot + '">' + Object.keys(PARTS).filter(function(k){ return PARTS[k].slot === slot; })
+          .map(function(k){ return opt(k, PARTS[k].name, bot[slot] === k); }).join('') + '</select></td>';
+      });
+      html += '<td><select data-medal="' + side + '-' + i + '">' + Object.keys(MEDALS).map(function(k){ return opt(k, MEDALS[k].name, bot.medal === k); }).join('') + '</select></td></tr>';
+    });
+    $('team' + side).innerHTML = html + '</table>';
+  }
+  function renderSetup(){
+    renderTeam(0); renderTeam(1);
+    $('terrain').innerHTML = Object.keys(TERRAINS).map(function(k){ return opt(k, TERRAINS[k].name); }).join('');
+    var rows = Object.keys(PARTS).map(function(k){
+      var d = PARTS[k];
+      return '<tr><td>' + d.set + '</td><td>' + SLOT_LABEL[d.slot] + '</td><td>' + d.name + '</td><td class="num">' + d.armor + '</td><td>' + partSummary(d) + '</td></tr>';
+    }).join('');
+    $('partsTable').innerHTML = '<table><tr><th>Set</th><th>Slot</th><th>Part</th><th>Armor</th><th>Stats</th></tr>' + rows + '</table>' +
+      '<p><b>Attack types:</b> ' + Object.keys(ATTACK_TYPES).map(function(k){ return ATTACK_TYPES[k].label + ' — ' + ATTACK_TYPES[k].text; }).join('<br>') + '</p>' +
+      '<p><b>Medals</b> (skill levels shoot/fight/support): ' + Object.keys(MEDALS).map(function(k){ var m = MEDALS[k]; return m.name + ' ' + m.skills.shoot + '/' + m.skills.fight + '/' + m.skills.support; }).join(' · ') + '</p>';
+  }
+  document.addEventListener('change', function(e){
+    var t = e.target, d;
+    if ((d = t.getAttribute('data-preset')) && t.value){ var p = d.split('-'); teams[p[0]][p[1]] = JSON.parse(JSON.stringify(PRESETS[t.value])); renderTeam(+p[0]); }
+    if ((d = t.getAttribute('data-part'))){ var q = d.split('-'); teams[q[0]][q[1]][q[2]] = t.value; }
+    if ((d = t.getAttribute('data-medal'))){ var m = d.split('-'); teams[m[0]][m[1]].medal = t.value; }
+  });
+  document.addEventListener('input', function(e){
+    var d = e.target.getAttribute('data-name');
+    if (d){ var p = d.split('-'); teams[p[0]][p[1]].name = e.target.value || '?'; }
+  });
+
+  // ---------- battle ----------
+  $('startBtn').addEventListener('click', function(){
+    battle = createBattle(teams, $('terrain').value);
+    $('setup').classList.add('hidden'); $('battle').classList.remove('hidden');
+    $('terrainLabel').textContent = '· ' + TERRAINS[battle.terrain].name;
+    run();
+  });
+  $('quitBtn').addEventListener('click', function(){ stop(); battle = null; $('battle').classList.add('hidden'); $('setup').classList.remove('hidden'); });
+  $('speedBtn').addEventListener('click', function(){ speed = speed === 1 ? 3 : speed === 3 ? 10 : 1; $('speedBtn').textContent = 'Speed: ' + speed + '×'; });
+
+  var waitingFor = null;   // the event the player has to deal with
+  function stop(){ if (timer){ clearInterval(timer); timer = null; } }
+  function run(){
+    stop();
+    waitingFor = null;
+    timer = setInterval(function(){
+      for (var i = 0; i < speed; i++){
+        var ev = stepOnce(battle);
+        if (ev){ stop(); waitingFor = ev; break; }
+      }
+      render();
+    }, 40);
+  }
+
+  function renderCmd(){
+    var c = $('cmd'), ev = waitingFor;
+    if (!ev){ c.innerHTML = '<i>Running… (tick ' + battle.tick + ')</i>'; return; }
+    if (ev.type === 'end'){
+      c.innerHTML = '<b>' + (battle.winner === 'draw' ? 'Draw.' : 'Player ' + (battle.winner + 1) + ' wins!') + '</b>';
+      return;
+    }
+    if (ev.type === 'action'){
+      c.innerHTML = battle.log.slice(ev.from).map(function(l){ return '<div class="' + l.kind + '">' + l.text + '</div>'; }).join('') +
+        '<button id="contBtn"><b>Continue</b> (space)</button>';
+      $('contBtn').addEventListener('click', run);
+      return;
+    }
+    // order: pick a part, then a target if it needs one
+    var bot = ev.bot;
+    var html = '<div class="p' + (bot.side + 1) + '"><b>P' + (bot.side + 1) + ' ' + bot.name + '</b> — choose an action:</div>';
+    if (!pendingTarget){
+      usableSlots(bot).forEach(function(slot){
+        var p = bot.parts[slot];
+        html += '<button data-slot="' + slot + '">' + SLOT_LABEL[slot] + ': <b>' + p.def.name + '</b><br><small>' + partSummary(p.def) + (p.uses != null ? ' (' + p.uses + ' left)' : '') + '</small></button>';
+      });
+    } else {
+      var def = bot.parts[pendingTarget].def;
+      var targets = def.action === 'repair' ? battle.teams[bot.side] : battle.teams[1 - bot.side];
+      html += '<div>' + def.name + ' → target:</div>';
+      targets.forEach(function(t, i){ if (t.state !== 'out') html += '<button data-target="' + i + '">' + t.name + (t.leader ? ' ★' : '') + '</button>'; });
+      html += '<button data-back="1">← back</button>';
+    }
+    c.innerHTML = html;
+    c.querySelectorAll('[data-slot]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var slot = btn.getAttribute('data-slot'), action = bot.parts[slot].def.action;
+        if (action === 'shoot' || action === 'repair'){ pendingTarget = slot; renderCmd(); }
+        else { giveOrder(battle, bot, slot); run(); }
+      });
+    });
+    c.querySelectorAll('[data-target]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var def = bot.parts[pendingTarget].def;
+        var team = def.action === 'repair' ? battle.teams[bot.side] : battle.teams[1 - bot.side];
+        giveOrder(battle, bot, pendingTarget, team[+btn.getAttribute('data-target')]);
+        pendingTarget = null; run();
+      });
+    });
+    c.querySelectorAll('[data-back]').forEach(function(btn){ btn.addEventListener('click', function(){ pendingTarget = null; renderCmd(); }); });
+  }
+
+  function stateText(bot){
+    if (bot.state === 'out') return 'FUNCTION CEASED';
+    if (bot.state === 'idle') return 'awaiting order';
+    if (bot.state === 'stuck') return 'no usable parts';
+    var part = bot.order ? bot.parts[bot.order.slot].def.name : '';
+    return { charge: '→ ' + part, act: '! ' + part, guard: 'GUARDING (' + bot.guardLeft + ')', cool: '← ' + part }[bot.state];
+  }
+
+  function render(){
+    if (!battle) return;
+    var lanes = '';
+    for (var i = 0; i < 3; i++){
+      lanes += '<div class="lane"><div class="center"></div>';
+      [0, 1].forEach(function(s){
+        var bot = battle.teams[s][i];
+        if (!bot) return;
+        var x = s === 0 ? 8 + bot.pos * 0.42 : 92 - bot.pos * 0.42;   // percent across the field
+        lanes += '<div class="marker p' + (s + 1) + ' ' + bot.state + '" style="left:' + x + '%">' + bot.name + (bot.leader ? ' ★' : '') + '<br><small>' + stateText(bot) + '</small></div>';
+      });
+      lanes += '</div>';
+    }
+    $('field').innerHTML = lanes;
+    [0, 1].forEach(function(s){
+      var html = '<b class="p' + (s + 1) + '">Player ' + (s + 1) + '</b><table>';
+      battle.teams[s].forEach(function(bot){
+        html += '<tr><th colspan="3" class="' + (bot.state === 'out' ? 'dead' : '') + '">' + bot.name + (bot.leader ? ' ★' : '') + ' <small>(' + bot.medal.name + ')</small></th></tr>';
+        SLOTS.forEach(function(slot){
+          var p = bot.parts[slot], pct = p.armor / p.max;
+          html += '<tr class="' + (p.armor ? '' : 'dead') + '"><td>' + SLOT_LABEL[slot] + '</td><td>' + p.def.name + (p.uses != null ? ' ×' + p.uses : '') + '</td>' +
+            '<td class="num"><span class="bar' + (pct < 0.34 ? ' low' : '') + '"><div style="width:' + pct * 100 + '%"></div></span> ' + p.armor + '/' + p.max + '</td></tr>';
+        });
+      });
+      $('teamStatus' + s).innerHTML = html + '</table>';
+    });
+    var logEl = $('log');
+    logEl.innerHTML = battle.log.map(function(l){ return '<div class="' + l.kind + '">t' + l.tick + ' ' + l.text + '</div>'; }).join('');
+    logEl.scrollTop = logEl.scrollHeight;
+    renderCmd();
+  }
+
+  document.addEventListener('keydown', function(e){
+    if (e.code === 'Space' && waitingFor && waitingFor.type === 'action'){ e.preventDefault(); run(); }
+  });
+
+  renderSetup();
+})();
+</script>
+</body>
+</html>
