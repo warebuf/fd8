@@ -4,36 +4,41 @@
 <meta charset="UTF-8">
 <title>fd8 · Robattle</title>
 <style>
-  body{ font-family:system-ui, sans-serif; margin:0; padding:12px; background:#f4f4f4; color:#111; font-size:14px; }
+  :root{ color-scheme:dark; --bg:#111418; --panel:#1b2027; --line:#323a45; --head:#252c35; --text:#e4e8ee; --dim:#8e98a6;
+    --p1:#4cc3e0; --p2:#f09a4a; --red:#ff6b6b; --green:#6fd47a; --idle:#3a3520; --guard:#1f3347; }
+  body{ font-family:system-ui, sans-serif; margin:0; padding:12px; background:var(--bg); color:var(--text); font-size:14px; }
   h2{ margin:4px 0 8px; font-size:16px; }
-  button{ font:inherit; cursor:pointer; }
+  small{ color:var(--dim); }
+  button, select, input{ font:inherit; color:var(--text); background:var(--head); border:1px solid var(--line); border-radius:4px; padding:2px 6px; }
+  button{ cursor:pointer; } button:hover{ border-color:var(--p1); }
   table{ border-collapse:collapse; }
-  td, th{ border:1px solid #ccc; padding:2px 6px; text-align:left; }
-  th{ background:#e6e6e6; }
+  td, th{ border:1px solid var(--line); padding:2px 6px; text-align:left; }
+  th{ background:var(--head); }
   .num{ text-align:right; font-family:ui-monospace, monospace; }
   .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
-  .box{ background:#fff; border:1px solid #ccc; padding:8px; }
-  .p1{ color:#0a6e8a; } .p2{ color:#b5500b; }
-  select{ font:inherit; max-width:170px; }
+  .box{ background:var(--panel); border:1px solid var(--line); padding:8px; }
+  .p1{ color:var(--p1); } .p2{ color:var(--p2); }
+  select{ max-width:170px; }
   .hidden{ display:none; }
 
   /* gauge field: P1 walks right from its base, P2 walks left; the center line is in the middle */
-  .field{ position:relative; width:760px; background:#fff; border:1px solid #ccc; }
-  .lane{ position:relative; height:44px; border-bottom:1px dashed #ddd; }
-  .center{ position:absolute; left:50%; top:0; bottom:0; border-left:2px solid #c00; }
-  .marker{ position:absolute; top:6px; width:110px; margin-left:-55px; text-align:center; font-size:12px; padding:2px; border:2px solid; background:#fff; }
-  .marker.p1{ border-color:#0a6e8a; } .marker.p2{ border-color:#b5500b; }
+  .field{ position:relative; width:760px; background:var(--panel); border:1px solid var(--line); }
+  .lane{ position:relative; height:44px; border-bottom:1px dashed var(--line); }
+  .center{ position:absolute; left:50%; top:0; bottom:0; border-left:2px solid var(--red); }
+  .marker{ position:absolute; top:6px; width:110px; margin-left:-55px; text-align:center; font-size:12px; padding:2px; border:2px solid; background:var(--head); }
+  .marker.p1{ border-color:var(--p1); } .marker.p2{ border-color:var(--p2); }
   .marker.out{ opacity:.35; text-decoration:line-through; }
-  .marker.idle{ background:#ffe; } .marker.guard{ background:#def; }
-  .bar{ height:5px; background:#ddd; width:80px; display:inline-block; vertical-align:middle; }
-  .bar > div{ height:100%; background:#3a3; }
-  .bar.low > div{ background:#d33; }
-  .dead{ color:#999; text-decoration:line-through; }
+  .marker.idle{ background:var(--idle); } .marker.guard{ background:var(--guard); }
+  .bar{ height:5px; background:var(--line); width:80px; display:inline-block; vertical-align:middle; }
+  .bar > div{ height:100%; background:var(--green); }
+  .bar.low > div{ background:var(--red); }
+  .dead{ color:var(--dim); text-decoration:line-through; }
   .log{ height:260px; overflow-y:auto; width:520px; font-family:ui-monospace, monospace; font-size:12px; white-space:pre-wrap; }
-  .log .act{ font-weight:bold; } .log .miss{ color:#888; } .log .crit{ color:#c00; font-weight:bold; } .log .out{ color:#c00; }
-  .log .heal{ color:#080; } .log .order{ color:#666; }
+  .act{ font-weight:bold; } .miss{ color:var(--dim); } .crit{ color:var(--red); font-weight:bold; } .out{ color:var(--red); }
+  .heal{ color:var(--green); } .order{ color:var(--dim); }
   .cmd button{ display:block; margin:3px 0; text-align:left; width:100%; }
-  .cmd{ width:330px; min-height:120px; }
+  .cmd{ min-width:330px; min-height:120px; }
+  .cmd td button{ width:auto; margin:0; }
 </style>
 </head>
 <body>
@@ -69,47 +74,52 @@
 
   function $(id){ return document.getElementById(id); }
   function opt(value, text, sel){ return '<option value="' + value + '"' + (sel ? ' selected' : '') + '>' + text + '</option>'; }
-  function partSummary(def){
-    if (def.slot === 'legs') return def.legType + ' · prop ' + def.propulsion + ' · eva ' + def.evasion + ' · def ' + def.defense;
-    return def.action + (def.type ? '/' + def.type : '') + ' · pow ' + def.power + ' · suc ' + def.success + ' · chg ' + def.charge + ' · cd ' + def.cooldown + (def.uses != null ? ' · ×' + def.uses : '');
-  }
 
   // ---------- setup ----------
   function renderTeam(side){
-    var html = '<b class="p' + (side + 1) + '">Player ' + (side + 1) + '</b><table><tr><th>#</th><th>Preset</th><th>Name</th>' +
-      SLOTS.map(function(s){ return '<th>' + SLOT_LABEL[s] + '</th>'; }).join('') + '<th>Medal</th></tr>';
+    var html = '<b class="p' + (side + 1) + '">Player ' + (side + 1) + '</b><table><tr><th>#</th><th>Preset</th>' +
+      SLOTS.map(function(s){ return '<th>' + SLOT_LABEL[s] + '</th>'; }).join('') + '</tr>';
     teams[side].forEach(function(bot, i){
       html += '<tr><td>' + (i + 1) + (i === 0 ? '★' : '') + '</td><td><select data-preset="' + side + '-' + i + '">' + opt('', '—') +
-        Object.keys(PRESETS).map(function(k){ return opt(k, PRESETS[k].name); }).join('') + '</select></td>' +
-        '<td><input size="8" data-name="' + side + '-' + i + '" value="' + bot.name + '"></td>';
+        Object.keys(PRESETS).map(function(k){ return opt(k, PRESETS[k].name); }).join('') + '</select></td>';
       SLOTS.forEach(function(slot){
         html += '<td><select data-part="' + side + '-' + i + '-' + slot + '">' + Object.keys(PARTS).filter(function(k){ return PARTS[k].slot === slot; })
           .map(function(k){ return opt(k, PARTS[k].name, bot[slot] === k); }).join('') + '</select></td>';
       });
-      html += '<td><select data-medal="' + side + '-' + i + '">' + Object.keys(MEDALS).map(function(k){ return opt(k, MEDALS[k].name, bot.medal === k); }).join('') + '</select></td></tr>';
+      html += '</tr>';
     });
     $('team' + side).innerHTML = html + '</table>';
   }
   function renderSetup(){
     renderTeam(0); renderTeam(1);
     $('terrain').innerHTML = Object.keys(TERRAINS).map(function(k){ return opt(k, TERRAINS[k].name); }).join('');
-    var rows = Object.keys(PARTS).map(function(k){
-      var d = PARTS[k];
-      return '<tr><td>' + d.set + '</td><td>' + SLOT_LABEL[d.slot] + '</td><td>' + d.name + '</td><td class="num">' + d.armor + '</td><td>' + partSummary(d) + '</td></tr>';
+    // one column per stat; hover a header for its meaning (also listed under the table)
+    var info = {};
+    STAT_INFO.forEach(function(r){ info[r[0]] = r; });
+    var actionCols = ['hp', 'action', 'type', 'success', 'power', 'charge', 'cooldown', 'uses'];
+    var legCols = ['hp', 'legType', 'propulsion', 'evasion', 'defense'];
+    function head(cols){ return '<tr><th>Set</th><th>Slot</th><th>Part</th>' + cols.map(function(c){ return '<th title="' + info[c][2].replace(/"/g, '&quot;') + '">' + info[c][1] + '</th>'; }).join('') + '</tr>'; }
+    function rows(filter, cols){
+      return Object.keys(PARTS).filter(function(k){ return filter(PARTS[k]); }).map(function(k){
+        var d = PARTS[k];
+        return '<tr><td>' + d.set + '</td><td>' + SLOT_LABEL[d.slot] + '</td><td>' + d.name + '</td>' +
+          cols.map(function(c){ var v = d[c]; return '<td class="' + (typeof v === 'number' ? 'num' : '') + '">' + (v == null ? '—' : v) + '</td>'; }).join('') + '</tr>';
+      }).join('');
+    }
+    var terrainRows = Object.keys(TERRAINS).map(function(t){
+      return '<tr><td>' + TERRAINS[t].name + '</td>' + LEG_TYPES.map(function(l){ var m = TERRAINS[t].mods[l] || [1, 1]; return '<td class="num">' + m[0] + ' / ' + m[1] + '</td>'; }).join('') + '</tr>';
     }).join('');
-    $('partsTable').innerHTML = '<table><tr><th>Set</th><th>Slot</th><th>Part</th><th>Armor</th><th>Stats</th></tr>' + rows + '</table>' +
-      '<p><b>Attack types:</b> ' + Object.keys(ATTACK_TYPES).map(function(k){ return ATTACK_TYPES[k].label + ' — ' + ATTACK_TYPES[k].text; }).join('<br>') + '</p>' +
-      '<p><b>Medals</b> (skill levels shoot/fight/support): ' + Object.keys(MEDALS).map(function(k){ var m = MEDALS[k]; return m.name + ' ' + m.skills.shoot + '/' + m.skills.fight + '/' + m.skills.support; }).join(' · ') + '</p>';
+    $('partsTable').innerHTML =
+      '<b>Heads &amp; arms</b><table>' + head(actionCols) + rows(function(d){ return d.slot !== 'legs'; }, actionCols) + '</table><br>' +
+      '<b>Legs</b><table>' + head(legCols) + rows(function(d){ return d.slot === 'legs'; }, legCols) + '</table>' +
+      '<h2>What the stats mean</h2><table>' + STAT_INFO.map(function(r){ return '<tr><th>' + r[1] + '</th><td>' + r[2] + '</td></tr>'; }).join('') + '</table>' +
+      '<h2>Attack types</h2><table>' + Object.keys(ATTACK_TYPES).map(function(k){ return '<tr><th>' + ATTACK_TYPES[k].label + '</th><td>' + ATTACK_TYPES[k].text + '</td></tr>'; }).join('') + '</table>' +
+      '<h2>Terrain <small>(propulsion × / evasion × per leg type)</small></h2><table><tr><th></th>' + LEG_TYPES.map(function(l){ return '<th>' + l + '</th>'; }).join('') + '</tr>' + terrainRows + '</table>';
   }
   document.addEventListener('change', function(e){
     var t = e.target, d;
     if ((d = t.getAttribute('data-preset')) && t.value){ var p = d.split('-'); teams[p[0]][p[1]] = JSON.parse(JSON.stringify(PRESETS[t.value])); renderTeam(+p[0]); }
     if ((d = t.getAttribute('data-part'))){ var q = d.split('-'); teams[q[0]][q[1]][q[2]] = t.value; }
-    if ((d = t.getAttribute('data-medal'))){ var m = d.split('-'); teams[m[0]][m[1]].medal = t.value; }
-  });
-  document.addEventListener('input', function(e){
-    var d = e.target.getAttribute('data-name');
-    if (d){ var p = d.split('-'); teams[p[0]][p[1]].name = e.target.value || '?'; }
   });
 
   // ---------- battle ----------
@@ -153,10 +163,13 @@
     var bot = ev.bot;
     var html = '<div class="p' + (bot.side + 1) + '"><b>P' + (bot.side + 1) + ' ' + bot.name + '</b> — choose an action:</div>';
     if (!pendingTarget){
+      html += '<table><tr><th></th><th>Part</th><th>Action</th><th>Type</th><th>Success</th><th>Power</th><th>Charge</th><th>Cooldown</th><th>Uses left</th></tr>';
       usableSlots(bot).forEach(function(slot){
-        var p = bot.parts[slot];
-        html += '<button data-slot="' + slot + '">' + SLOT_LABEL[slot] + ': <b>' + p.def.name + '</b><br><small>' + partSummary(p.def) + (p.uses != null ? ' (' + p.uses + ' left)' : '') + '</small></button>';
+        var p = bot.parts[slot], d = p.def;
+        html += '<tr><td><button data-slot="' + slot + '">Use</button></td><td>' + SLOT_LABEL[slot] + ': <b>' + d.name + '</b></td><td>' + d.action + '</td><td>' + (d.type || '—') + '</td>' +
+          [d.success, d.power, d.charge, d.cooldown].map(function(v){ return '<td class="num">' + v + '</td>'; }).join('') + '<td class="num">' + (p.uses == null ? '—' : p.uses) + '</td></tr>';
       });
+      html += '</table>';
     } else {
       var def = bot.parts[pendingTarget].def;
       var targets = def.action === 'repair' ? battle.teams[bot.side] : battle.teams[1 - bot.side];
@@ -208,11 +221,11 @@
     [0, 1].forEach(function(s){
       var html = '<b class="p' + (s + 1) + '">Player ' + (s + 1) + '</b><table>';
       battle.teams[s].forEach(function(bot){
-        html += '<tr><th colspan="3" class="' + (bot.state === 'out' ? 'dead' : '') + '">' + bot.name + (bot.leader ? ' ★' : '') + ' <small>(' + bot.medal.name + ')</small></th></tr>';
+        html += '<tr><th colspan="3" class="' + (bot.state === 'out' ? 'dead' : '') + '">' + bot.name + (bot.leader ? ' ★' : '') + '</th></tr>';
         SLOTS.forEach(function(slot){
-          var p = bot.parts[slot], pct = p.armor / p.max;
-          html += '<tr class="' + (p.armor ? '' : 'dead') + '"><td>' + SLOT_LABEL[slot] + '</td><td>' + p.def.name + (p.uses != null ? ' ×' + p.uses : '') + '</td>' +
-            '<td class="num"><span class="bar' + (pct < 0.34 ? ' low' : '') + '"><div style="width:' + pct * 100 + '%"></div></span> ' + p.armor + '/' + p.max + '</td></tr>';
+          var p = bot.parts[slot], pct = p.hp / p.max;
+          html += '<tr class="' + (p.hp ? '' : 'dead') + '"><td>' + SLOT_LABEL[slot] + '</td><td>' + p.def.name + (p.uses != null ? ' ×' + p.uses : '') + '</td>' +
+            '<td class="num"><span class="bar' + (pct < 0.34 ? ' low' : '') + '"><div style="width:' + pct * 100 + '%"></div></span> ' + p.hp + '/' + p.max + '</td></tr>';
         });
       });
       $('teamStatus' + s).innerHTML = html + '</table>';

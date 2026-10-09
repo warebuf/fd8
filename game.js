@@ -23,9 +23,9 @@ function makeBot(spec, side, idx){
   var parts = {};
   SLOTS.forEach(function(slot){
     var def = PARTS[spec[slot]];
-    parts[slot] = { key: spec[slot], def: def, armor: def.armor, max: def.armor, uses: def.uses == null ? null : def.uses };
+    parts[slot] = { key: spec[slot], def: def, hp: def.hp, max: def.hp, uses: def.uses == null ? null : def.uses };
   });
-  return { side: side, idx: idx, name: spec.name, leader: idx === 0, parts: parts, medal: MEDALS[spec.medal], medalKey: spec.medal,
+  return { side: side, idx: idx, name: spec.name, leader: idx === 0, parts: parts,
            pos: 0, state: 'idle', order: null, guardLeft: 0 };
 }
 
@@ -42,7 +42,7 @@ function log(b, text, kind){ b.log.push({ text: text, kind: kind || 'meta', tick
 function label(bot){ return 'P' + (bot.side + 1) + ' ' + bot.name; }
 function isOut(bot){ return bot.state === 'out'; }
 function alive(team){ return team.filter(function(x){ return !isOut(x); }); }
-function intact(bot, slot){ return bot.parts[slot].armor > 0; }
+function intact(bot, slot){ return bot.parts[slot].hp > 0; }
 
 // ---------- derived stats ----------
 function terrainMod(b, bot){ return TERRAINS[b.terrain].mods[bot.parts.legs.def.legType] || [1, 1]; }
@@ -54,7 +54,6 @@ function evasion(b, bot){
   if (!intact(bot, 'legs')) return 0;                       // broken legs: can't dodge
   return bot.parts.legs.def.evasion * terrainMod(b, bot)[1];
 }
-function skillFor(bot, def){ return bot.medal.skills[def.action === 'fight' ? 'fight' : def.action === 'shoot' ? 'shoot' : 'support'] || 0; }
 function chargeSpeed(b, bot, def){ return (propulsion(b, bot) + def.charge) / CHARGE_DIV; }
 function coolSpeed(b, bot, def){ return (propulsion(b, bot) / 2 + def.cooldown) / COOL_DIV; }
 
@@ -62,7 +61,7 @@ function coolSpeed(b, bot, def){ return (propulsion(b, bot) / 2 + def.cooldown) 
 function usableSlots(bot){
   return ['head', 'rarm', 'larm'].filter(function(slot){
     var p = bot.parts[slot];
-    return p.armor > 0 && p.def.action && (p.uses == null || p.uses > 0);
+    return p.hp > 0 && p.def.action && (p.uses == null || p.uses > 0);
   });
 }
 
@@ -123,7 +122,7 @@ function backAtBase(b, bot){
 function resolve(b, bot){
   var slot = bot.order.slot, part = bot.parts[slot], def = part.def;
   bot.state = 'cool';
-  if (part.armor <= 0){ log(b, label(bot) + "'s " + def.name + ' was destroyed — the action fails.', 'miss'); return; }
+  if (part.hp <= 0){ log(b, label(bot) + "'s " + def.name + ' was destroyed — the action fails.', 'miss'); return; }
   if (part.uses != null) part.uses--;
   var enemies = alive(b.teams[1 - bot.side]);
   if (def.action === 'shoot'){
@@ -139,13 +138,13 @@ function resolve(b, bot){
     attack(b, bot, def, foe);
   } else if (def.action === 'repair'){
     var ally = bot.order.target && !isOut(bot.order.target) ? bot.order.target : bot;
-    var worst = SLOTS.filter(function(s){ return intact(ally, s) && ally.parts[s].armor < ally.parts[s].max; })
-      .sort(function(x, y){ return ally.parts[x].armor / ally.parts[x].max - ally.parts[y].armor / ally.parts[y].max; })[0];
+    var worst = SLOTS.filter(function(s){ return intact(ally, s) && ally.parts[s].hp < ally.parts[s].max; })
+      .sort(function(x, y){ return ally.parts[x].hp / ally.parts[x].max - ally.parts[y].hp / ally.parts[y].max; })[0];
     if (!worst){ log(b, label(bot) + ' uses ' + def.name + ' on ' + label(ally) + ', but nothing needs repair.', 'miss'); return; }
-    var amt = Math.round(def.power * (1 + skillFor(bot, def) * MEDAL_POWER_PER_LEVEL));
-    var p = ally.parts[worst], before = p.armor;
-    p.armor = Math.min(p.max, p.armor + amt);
-    log(b, label(bot) + ' repairs ' + label(ally) + "'s " + SLOT_LABEL[worst] + ' +' + (p.armor - before) + ' (' + p.armor + '/' + p.max + ').', 'heal');
+    var amt = def.power;
+    var p = ally.parts[worst], before = p.hp;
+    p.hp = Math.min(p.max, p.hp + amt);
+    log(b, label(bot) + ' repairs ' + label(ally) + "'s " + SLOT_LABEL[worst] + ' +' + (p.hp - before) + ' (' + p.hp + '/' + p.max + ').', 'heal');
   } else if (def.action === 'guard'){
     bot.state = 'guard';
     bot.guardLeft = GUARD_TICKS;
@@ -160,12 +159,11 @@ function attack(b, attacker, def, target){
   if (!type.pierce) guard = alive(b.teams[target.side]).filter(function(g){ return g !== target && g.state === 'guard' && intact(g, g.order.slot); })[0];
   if (guard){ log(b, label(guard) + ' intercepts the attack!', 'meta'); target = guard; }
 
-  var skill = skillFor(attacker, def);
-  var chance = clamp(BASE_HIT + def.success + skill * MEDAL_SUCCESS_PER_LEVEL - evasion(b, target) * (type.evasionMult == null ? 1 : type.evasionMult), MIN_HIT, MAX_HIT);
+  var chance = clamp(BASE_HIT + def.success - evasion(b, target) * (type.evasionMult == null ? 1 : type.evasionMult), MIN_HIT, MAX_HIT);
   var roll = rng() * 100;
   if (roll >= chance){ log(b, '  Miss! (' + Math.round(chance) + '% to hit)', 'miss'); return; }
   var clean = roll < chance * CLEAN_HIT_SHARE;
-  var dmg = def.power * (1 + skill * MEDAL_POWER_PER_LEVEL) * (0.9 + rng() * 0.2);
+  var dmg = def.power * (0.9 + rng() * 0.2);
   if (clean) dmg *= type.critMult || 1.5;
 
   var slot;
@@ -191,9 +189,9 @@ function attack(b, attacker, def, target){
 
 function damage(b, bot, slot, amount, clean){
   var p = bot.parts[slot];
-  p.armor = Math.max(0, p.armor - amount);
-  log(b, '  ' + (clean ? 'Clean hit! ' : 'Hit: ') + label(bot) + "'s " + SLOT_LABEL[slot] + ' −' + amount + ' (' + p.armor + '/' + p.max + ')', clean ? 'crit' : 'hit');
-  if (p.armor > 0) return;
+  p.hp = Math.max(0, p.hp - amount);
+  log(b, '  ' + (clean ? 'Clean hit! ' : 'Hit: ') + label(bot) + "'s " + SLOT_LABEL[slot] + ' −' + amount + ' (' + p.hp + '/' + p.max + ')', clean ? 'crit' : 'hit');
+  if (p.hp > 0) return;
   if (slot === 'head'){
     bot.state = 'out';
     [b.orderQueue, b.actQueue].forEach(function(q){ var i = q.indexOf(bot); if (i !== -1) q.splice(i, 1); });
